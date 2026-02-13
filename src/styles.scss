@@ -1,0 +1,33 @@
+/* You can add global styles to this file, and also import other style files */
+
+/* 蓝图计算所需的样式 */
+app-blueprint-compute {
+  /* 蓝图 tree 节点缩进 */
+  .ant-tree-indent-unit {
+      width: 6px;
+  }
+}
+
+
+#debugging {
+  color: red;
+}
+
+app-market-trend .ant-statistic-content {
+    font-size: 16px;
+}
+
+app-root .ant-layout-footer {
+  padding: 0;
+  overflow-y: auto;
+  max-height: 32px;
+  height: 24px;
+}
+
+/*  通用流式布局 */
+.eh-flow-start-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-self: start;
+  align-items: center;
+}

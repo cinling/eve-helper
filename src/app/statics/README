@@ -1,0 +1,11 @@
+# 目录说明
+
+ * contants 常量
+ * <span style="text-decoration:line-through;">entities</span> 实体/对象/结构。已转移到 ../structs 目录下
+ * helpers 帮助类
+ * interfaces 接口
+ * tools 工具类
+
+# 说明
+
+ `helpers` 和 `tools` 的区别：helpers 是通用的方法，不含任何业务逻辑；tools 是包含部分业务逻辑的代码。 helpers 放到其他项目中完全可用，tools 放到其他项目中会夹杂当前项目的一些业务代码

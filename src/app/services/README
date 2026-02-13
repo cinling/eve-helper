@@ -1,0 +1,7 @@
+【拒绝循环依赖，同层互相注入】
+
+// 基础的依赖关系
+services > repositories > managers > apis > messages
+
+// 沟通层。如果同层或者下层想要访问上层的数据，可以通过 messages 进行数据交互
+messages
