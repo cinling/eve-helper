@@ -19,8 +19,17 @@ export type LocationFlag =
   | 'BoosterBay'
   | 'CapsuleerDeliveries'
   | 'Cargo'
+  | 'CorpDeliveries'
   | 'CorporationGoalDeliveries'
   | 'CorpseBay'
+  | 'CorpSAG0'
+  | 'CorpSAG1'
+  | 'CorpSAG2'
+  | 'CorpSAG3'
+  | 'CorpSAG4'
+  | 'CorpSAG5'
+  | 'CorpSAG6'
+  | 'CorpSAG7'
   | 'Deliveries'
   | 'DroneBay'
   | 'FighterBay'
@@ -63,6 +72,7 @@ export type LocationFlag =
   | 'MedSlot7'
   | 'MobileDepotHold'
   | 'MoonMaterialBay'
+  | 'OfficeFolder'
   | 'QuafeBay'
   | 'RigSlot0'
   | 'RigSlot1'
@@ -124,6 +134,18 @@ export class LocationFlagConstants {
   static readonly BoosterBay: LocationFlag = 'BoosterBay';
   static readonly CapsuleerDeliveries: LocationFlag = 'CapsuleerDeliveries';
   static readonly Cargo: LocationFlag = 'Cargo';
+  /**
+   * 军团快递
+   */
+  static readonly CorpDeliveries: LocationFlag = 'CorpDeliveries';
+  static readonly CorpSAG0: LocationFlag = 'CorpSAG0';
+  static readonly CorpSAG1: LocationFlag = 'CorpSAG1';
+  static readonly CorpSAG2: LocationFlag = 'CorpSAG2';
+  static readonly CorpSAG3: LocationFlag = 'CorpSAG3';
+  static readonly CorpSAG4: LocationFlag = 'CorpSAG4';
+  static readonly CorpSAG5: LocationFlag = 'CorpSAG5';
+  static readonly CorpSAG6: LocationFlag = 'CorpSAG6';
+  static readonly CorpSAG7: LocationFlag = 'CorpSAG7';
   static readonly CorporationGoalDeliveries: LocationFlag = 'CorporationGoalDeliveries';
   static readonly CorpseBay: LocationFlag = 'CorpseBay';
   static readonly Deliveries: LocationFlag = 'Deliveries';
@@ -168,6 +190,7 @@ export class LocationFlagConstants {
   static readonly MedSlot7: LocationFlag = 'MedSlot7';
   static readonly MobileDepotHold: LocationFlag = 'MobileDepotHold';
   static readonly MoonMaterialBay: LocationFlag = 'MoonMaterialBay';
+  static readonly OfficeFolder: LocationFlag = 'OfficeFolder';
   static readonly QuafeBay: LocationFlag = 'QuafeBay';
   static readonly RigSlot0: LocationFlag = 'RigSlot0';
   static readonly RigSlot1: LocationFlag = 'RigSlot1';

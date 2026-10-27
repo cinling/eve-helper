@@ -2,7 +2,6 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { MarketTrendComponent } from './market-trend.component';
 import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
-import { provideCharts, withDefaultRegisterables } from 'ng2-charts';
 
 describe('MarketTrendComponent', () => {
   let component: MarketTrendComponent;
@@ -13,7 +12,6 @@ describe('MarketTrendComponent', () => {
       imports: [MarketTrendComponent],
       providers: [
         provideHttpClient(withInterceptorsFromDi()),
-        provideCharts(withDefaultRegisterables()),
       ],
     })
     .compileComponents();

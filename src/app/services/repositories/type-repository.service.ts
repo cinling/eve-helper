@@ -1,10 +1,12 @@
 import { Injectable } from '@angular/core';
-import { firstValueFrom, forkJoin, map, Observable } from 'rxjs';
+import { catchError, firstValueFrom, forkJoin, map, Observable, of } from 'rxjs';
 import { HttpClient } from '@angular/common/http';
 import { ObservableValue } from '../../structs/ObservableValue';
 import { LoadingViewManagerService } from '../managers/loading-view-manager.service';
 import { ISdeGroup } from '../../structs/sde/Group';
 import { ISdeType } from '../../structs/sde/Type';
+import { ESI_UNIVERSE_TYPES } from '../../statics/contants/esi-api';
+import { IType } from '../../statics/entities/common';
 
 /**
  * category - group - type
@@ -44,6 +46,14 @@ export class TypeRepositoryService {
     return new Observable(sub => { setTimeout(async() => {
       await firstValueFrom(forkJoin([
         this.httpClient.get<SdeTypeDict>("/assets/types.gen.json").pipe(map(dict => {
+          // types.gen.json 部分类型的 name 是多语言对象 {de,en,zh,...}，统一归一化为中文名
+          for (let typeId in dict) {
+            let name = dict[typeId].name as unknown
+            if (name && typeof name === 'object') {
+              let multilingualName = name as { zh?: string, en?: string }
+              dict[typeId].name = multilingualName.zh ?? multilingualName.en ?? ""
+            }
+          }
           this.typeDictOv.setValue(dict)
           return true
         })),
@@ -134,7 +144,12 @@ export class TypeRepositoryService {
   }
 
   /**
-   * 获取给定数组的物品数据
+   * 本地 SDE 缺失、运行时从 ESI 在线补全的物品类型缓存
+   */
+  private onlineTypeDict: SdeTypeDict = {}
+
+  /**
+   * 获取给定数组的物品数据（本地 SDE 缺失的新类型从 ESI 在线补全）
    * @param typeIds
    * @returns
    */
@@ -142,10 +157,40 @@ export class TypeRepositoryService {
     return new Observable(sub => {setTimeout(async () => {
       let typeDict = await firstValueFrom(this.getTypeDict())
       let dict: SdeTypeDict = {}
+      let missingTypeIds: number[] = []
       for (let i in typeIds) {
         let typeId = typeIds[i]
-        dict[typeId] = typeDict[typeId]
+        if (typeDict[typeId]) {
+          dict[typeId] = typeDict[typeId]
+        } else if (this.onlineTypeDict[typeId]) {
+          dict[typeId] = this.onlineTypeDict[typeId]
+        } else {
+          missingTypeIds.push(typeId)
+        }
       }
+      missingTypeIds = [...new Set(missingTypeIds)]
+
+      // 本地 SDE 缺失的类型（如新涂装/新装备），从 ESI 在线补全中文名
+      if (missingTypeIds.length > 0) {
+        let onlineTypes = await firstValueFrom(forkJoin(
+          missingTypeIds.map(typeId => this.httpClient.get<IType>(`${ESI_UNIVERSE_TYPES}/${typeId}`, {
+            params: { language: 'zh', datasource: 'tranquility' }
+          }).pipe(catchError(() => of(null))))
+        ))
+        for (let onlineType of onlineTypes) {
+          if (!onlineType) continue
+          let sdeType: ISdeType = {
+            typeID: onlineType.type_id,
+            groupID: onlineType.group_id,
+            name: onlineType.name,
+            marketGroupID: onlineType.market_group_id,
+            description: onlineType.description
+          }
+          this.onlineTypeDict[sdeType.typeID] = sdeType
+          dict[sdeType.typeID] = sdeType
+        }
+      }
+
       sub.next(dict)
       sub.complete()
     })})

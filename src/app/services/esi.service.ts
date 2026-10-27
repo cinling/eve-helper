@@ -414,7 +414,8 @@ export class EsiService implements IEsiService {
    */
   verify(accessToken: string): Observable<IEsiVerifyReponse> {
     return new Observable(sub => {setTimeout(async() => {
-      const url = `https://esi.evetech.net/verify/` + "?uuid=" + ValueHelper.uuid()
+      // const url = `https://esi.evetech.net/verify/` + "?uuid=" + ValueHelper.uuid()
+      const url = `https://login.eveonline.com/v2/oauth/verify`
       const headers = {
         Authorization: `Bearer ${accessToken}`,
       }

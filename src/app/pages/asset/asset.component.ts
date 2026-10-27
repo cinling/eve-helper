@@ -9,6 +9,7 @@ import { NzTypographyModule } from 'ng-zorro-antd/typography';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { NzImageModule } from 'ng-zorro-antd/image';
 import { ImageRepositoryService } from '../../services/repositories/image-repository.service';
+import { CharacterService } from '../../services/character.service';
 
 @Component({
   selector: 'app-asset',
@@ -35,6 +36,17 @@ import { ImageRepositoryService } from '../../services/repositories/image-reposi
   </button>
 
    <p nz-typography>上次更新时间：{{ assetViewVo?.lastUpdateTime }}</p>
+   <p nz-typography>测试结果：{{ testResult }}</p>
+
+  <button
+    nz-button
+    nzType="primary"
+    nzShape="circle"
+    nz-tooltip="测试"
+    (click)="onTestClick()"
+  >
+    <span nz-icon nzType="calculator" nzTheme="outline"></span>
+  </button>
 </div>
 
 <nz-table
@@ -61,16 +73,25 @@ import { ImageRepositoryService } from '../../services/repositories/image-reposi
                 [(nzExpand)]="item.expand"
                 (nzExpandChange)="collapse(mapOfExpandedData[data.key], item, $event)"
               >
-                <img
-                  nz-image
-                  width="24px"
-                  height="24px"
-                  [nzDisablePreview]="true"
-                  [nzSrc]="imgsrc(item)"
-                />{{ item.name }}
+                @if (isLogicalNode(item)) {
+                  <span
+                    nz-icon
+                    [nzType]="iconType(item)"
+                    style="display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;font-size:18px;color:#8c8c8f;"
+                  ></span>
+                } @else {
+                  <img
+                    nz-image
+                    width="24px"
+                    height="24px"
+                    [nzDisablePreview]="true"
+                    [nzSrc]="imgsrc(item)"
+                  />
+                }{{ item.name }}
               </td>
               <td></td>
-              <td></td>
+              <td>{{ item.quantity }}</td>
+              <td>{{ item.amount }}</td>
             </tr>
           }
         }
@@ -85,6 +106,7 @@ export class AssetComponent {
   constructor(
     private assetService: AssetService,
     private imageRepository: ImageRepositoryService,
+    private characterService: CharacterService,
   ) {
     this.init().subscribe()
   }
@@ -126,10 +148,36 @@ export class AssetComponent {
     if (vo.type == AssetItemTypeConstants.Character) {
       return this.imageRepository.character(vo.id)
     }
-    if (vo.type == AssetItemTypeConstants.Station && vo.typeId) {
+    if (vo.type == AssetItemTypeConstants.Corporation) {
+      return this.imageRepository.corporation(vo.id)
+    }
+    if (
+      (vo.type == AssetItemTypeConstants.Station ||
+        vo.type == AssetItemTypeConstants.Structure ||
+        vo.type == AssetItemTypeConstants.Pack ||
+        vo.type == AssetItemTypeConstants.Item) &&
+      vo.typeId
+    ) {
       return this.imageRepository.typeIcon(vo.typeId)
     }
     return ""
+  }
+
+  /**
+   * 星系/机库等逻辑分组节点没有真实物品图标，使用图标字体占位
+   */
+  isLogicalNode(vo: IAssetItemVo): boolean {
+    return this.imgsrc(vo) == ""
+  }
+
+  /**
+   * 逻辑分组节点的图标字体类型
+   */
+  iconType(vo: IAssetItemVo): string {
+    if (vo.type == AssetItemTypeConstants.SolarSystem) return "global"
+    if (vo.type == AssetItemTypeConstants.StationHangar) return "appstore"
+    if (vo.type == AssetItemTypeConstants.StationAssetSafety) return "inbox"
+    return "folder"
   }
 
   convertTreeToList(root: IAssetItemVo): IAssetItemVo[] {
@@ -171,4 +219,30 @@ export class AssetComponent {
       }
     }
   }
+
+  onTestClick() {
+    this.testResult = "加载中..."
+    let parts: string[] = []
+
+    // 部门机库名称接口
+    this.assetService.getCorporationHangarDivisions(2123239526, 98798485).subscribe(dict => {
+      parts.push("部门机库: " + Array.from(dict.entries()).map(([k, v]) => `${k}=${v}`).join(", "))
+      this.testResult = parts.join("\n")
+    }, error => {
+      parts.push("部门接口失败: " + (error?.message ?? error))
+      this.testResult = parts.join("\n")
+    })
+
+    // 军团资产（按 flag 分组）
+    this.assetService.requestCorporationAssetItemVos(2123239526, 98798485).subscribe(vos => {
+      let lines = vos.children?.map(c => `${c.name}: [${c.children?.map(g => g.name).join(", ")}]`) ?? []
+      parts.push(lines.join(" | "))
+      this.testResult = parts.join("\n")
+    }, error => {
+      parts.push("资产请求失败: " + (error?.message ?? error))
+      this.testResult = parts.join("\n")
+    })
+  }
+
+  testResult = ""
 }

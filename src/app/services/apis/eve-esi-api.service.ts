@@ -316,4 +316,31 @@ export class EveEsiApiService {
     return this.httpClient.get(`${ESI_BASE_URL}/characters/${characterId}`)
       .pipe(map(response => response as IEsiCharacter))
   }
+
+
+  /**
+   * 获取军团资产数据
+   */
+  corporationsAssets(accessToken: string, corporation_id: number, page: number | undefined = undefined): Observable<PageValue<IEisAsset>> {
+    // https://esi.evetech.net/corporations/{corporation_id}/assets
+    let url = `${ESI_BASE_URL}/corporations/${corporation_id}/assets` + "?uuid=" + ValueHelper.uuid()
+    if (page) {
+      url += `&page=${page}`
+    }
+
+    return this.httpClient.get(url, {
+      observe: 'response',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    }).pipe(map(response => {
+      let size = Number(response.headers.get("X-Pages") ?? '1')
+      let assets = response.body as IEisAsset[]
+      return {
+        page: 1,
+        size: size,
+        data: assets
+      }
+    }))
+  }
 }

@@ -62,13 +62,18 @@ export interface IAssetItemVo {
 /**
  * 项目类型
  */
-export type AssetItemType = "character" | "station" | "Structure" | "stationHangar" | "stationAssetSafety" | "pack" | "item"
+export type AssetItemType = "character" | "corporation" | "station" | "Structure" | "stationHangar" | "stationAssetSafety" | "pack" | "item" | "solarSystem"
 
 export class AssetItemTypeConstants {
   /**
    * 角色
    */
   static readonly Character: AssetItemType = "character"
+
+  /**
+   * 军团
+   */
+  static readonly Corporation: AssetItemType = "corporation"
 
   /**
    * 空间站
@@ -79,6 +84,11 @@ export class AssetItemTypeConstants {
    * 建筑
    */
   static readonly Structure: AssetItemType = "Structure";
+
+  /**
+   * 星系
+   */
+  static readonly SolarSystem: AssetItemType = "solarSystem"
 
   /**
    * 空间站-舰船机库

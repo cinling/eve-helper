@@ -21,6 +21,16 @@ export class ImageRepositoryService {
   }
 
   /**
+   * 军团logo
+   * @param corporationId
+   * @param size
+   * @returns
+   */
+  corporation(corporationId: number, size: 32 | 64 | 128 | 256 = 64) {
+    return `https://images.evetech.net/corporations/${corporationId}/logo?size=${size}`
+  }
+
+  /**
    * 蓝图图片
    * @param blueprintTypeId
    * @param size
