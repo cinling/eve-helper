@@ -45,3 +45,5 @@ Thumbs.db
 /public/**/*.gen.json
 /public/**/*.cache.json
 **.cache
+
+/.**

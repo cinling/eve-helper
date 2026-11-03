@@ -22,6 +22,7 @@ import { InstanceMessageService } from './messages/instance-message.service';
 import { v4 as uuidv4 } from 'uuid'
 import { EveEsiApiService } from './apis/eve-esi-api.service';
 import { ValueHelper } from '../statics/helpers/ValueHelper';
+import { ObservableHelper } from '../statics/helpers/ObservableHelper';
 
 @Injectable({
   providedIn: 'root'
@@ -91,9 +92,16 @@ export class EsiService implements IEsiService {
     this.characterAuthDict.pipe(first()).subscribe(async(characterAuthDict) => {
       for (let i in characterAuthDict) {
         let auth = characterAuthDict[i]
-        let ok = await firstValueFrom(this.check(auth.characterId))
-        if (!ok) {
-          this.autoRefreshAccessToken(auth.characterId, true).subscribe() // accessToken 无效，立刻刷新
+        // 单个角色的检测失败不能中断其他角色的令牌刷新
+        try {
+          let ok = await firstValueFrom(this.check(auth.characterId))
+          if (!ok) {
+            this.autoRefreshAccessToken(auth.characterId, true).subscribe({
+              error: error => console.error(`EsiService.init 角色[${auth.characterId}]令牌刷新失败`, error)
+            }) // accessToken 无效，立刻刷新
+          }
+        } catch (error) {
+          console.error(`EsiService.init 角色[${auth.characterId}]授权检测失败`, error)
         }
       }
     })
@@ -437,8 +445,17 @@ export class EsiService implements IEsiService {
    * @param characterId
    */
   check(characterId: number): Observable<boolean> {
-    return new Observable(sub => {setTimeout(async() => {
-      let accessToken = await firstValueFrom(this.getAccessToken(characterId))
+    return ObservableHelper.createDeferred(async sub => {
+      let accessToken: string
+      try {
+        accessToken = await firstValueFrom(this.getAccessToken(characterId))
+      } catch (error) {
+        // 令牌刷新失败（例如刷新令牌被撤销）时视为授权不可用，不能让它卡住后续角色
+        console.error("EsiService.check 获取accessToken失败", characterId, error)
+        sub.next(false)
+        sub.complete()
+        return
+      }
 
       this.esiApi.charactersKillMailsRecent(accessToken, characterId).subscribe({
         next: r => {
@@ -451,7 +468,7 @@ export class EsiService implements IEsiService {
           sub.complete()
         }
       })
-    })})
+    })
   }
 
   removeCharacter(characterId: number): Observable<void> {

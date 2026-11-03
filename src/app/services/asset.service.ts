@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { EveEsiApiService } from './apis/eve-esi-api.service';
 import { firstValueFrom, forkJoin, map, Observable } from 'rxjs';
 import { CommonMessageService } from './messages/common-message.service';
-import { AssetItemTypeConstants, IAssetItemVo, IAssetViewVo } from '../structs/view/AssetItemVo';
+import { AssetItemTypeConstants, IAssetItemVo, IAssetLoadResult, IAssetViewVo } from '../structs/view/AssetItemVo';
 import { IEisAsset, LocationFlagConstants, LocationTypeConstants } from '../structs/esi/Asset';
 import { UniverseRepositoryService } from './repositories/universe-repository.service';
 import { LoadingViewManagerService } from './managers/loading-view-manager.service';
@@ -10,7 +10,6 @@ import { TimeHelper } from '../statics/helpers/TimeHelper';
 import { SdeGroupDict, SdeTypeDict, TypeRepositoryService } from './repositories/type-repository.service';
 import { CATEGORY_ID_BLUEPRINT, CATEGORY_ID_SHIP, TYPE_ID_CORPORATION_OFFICE } from '../statics/contants/eve';
 import { InstanceMessageService } from './messages/instance-message.service';
-import { number } from 'echarts';
 import { ObservableHelper } from '../statics/helpers/ObservableHelper';
 import { ICharacterCorporationVo } from '../structs/vos/CharacterCorportationVo';
 import { AssetApiService } from './apis/asset-api.service';
@@ -49,80 +48,134 @@ export class AssetService {
   }
 
   getAssetViewVo(reloadNow: boolean = false): Observable<IAssetViewVo> {
-    return new Observable(sub => { setTimeout(async() => {
-      let getSetTool = await firstValueFrom(this.instanceMessage.getSetTool)
-      let vosKV = await firstValueFrom(getSetTool.getWithKeyValue<IAssetItemVo[]>(this.AssetItemVosCacheKey))
+    return ObservableHelper.createDeferred(async sub => {
+      let result = await firstValueFrom(this.getAssetItemVos(reloadNow))
+
+      let lastUpdateTime = TimeHelper.datetime(0)
+      try {
+        let getSetTool = await firstValueFrom(this.instanceMessage.getSetTool)
+        let vosKV = await firstValueFrom(getSetTool.getWithKeyValue<IAssetItemVo[]>(this.AssetItemVosCacheKey))
+        lastUpdateTime = TimeHelper.datetime(vosKV?.timestamp ?? 0)
+      } catch (error) {
+        // 读取更新时间失败不影响资产展示
+        console.error('AssetService.getAssetViewVo 读取更新时间失败', error)
+      }
 
       sub.next({
-        assetItemVos: await firstValueFrom(this.getAssetItemVos(reloadNow)),
-        lastUpdateTime: TimeHelper.datetime(vosKV?.timestamp ?? 0)
+        assetItemVos: result.vos,
+        lastUpdateTime: lastUpdateTime,
+        errors: result.errors
       })
-    })})
+      sub.complete()
+    })
   }
 
   /**
-   * 获取所有资产数据ß
-   * @param reloadNow 是否立刻重新从ESI加载，默认是优先读取数据库中的数据ß
+   * 获取所有资产数据。
+   * 单个角色/军团加载失败会被隔离为一条错误信息，不会导致整页加载不出来。
+   * @param reloadNow 是否立刻重新从ESI加载，默认是优先读取数据库中的数据
    * @returns
    */
-  getAssetItemVos(reloadNow: boolean = false): Observable<IAssetItemVo[]> {
-    return new Observable(sub => {setTimeout(async() => {
+  getAssetItemVos(reloadNow: boolean = false): Observable<IAssetLoadResult> {
+    return ObservableHelper.createDeferred(async sub => {
       let getSetTool = await firstValueFrom(this.instanceMessage.getSetTool)
       let esiService = await firstValueFrom(this.instanceMessage.esiService)
+      let errors: string[] = []
 
       if (!reloadNow) {
         // 从缓存中加载
-        let settings = await firstValueFrom(this.commonMessage.settings)
-        let expireTimestampMS = TimeHelper.timestampMS() - settings.asset.expireHour * 60 * 60 * 1000
+        try {
+          let settings = await firstValueFrom(this.commonMessage.settings)
+          let expireHour = settings?.asset?.expireHour ?? 2
+          let expireTimestampMS = TimeHelper.timestampMS() - expireHour * 60 * 60 * 1000
 
-        let vosKV = await firstValueFrom(getSetTool.getWithKeyValue<IAssetItemVo[]>(this.AssetItemVosCacheKey))
-        if (vosKV != null && (vosKV.timestamp ?? 0) > expireTimestampMS) {
-          sub.next(vosKV.value)
-          sub.complete()
-          return
+          let vosKV = await firstValueFrom(getSetTool.getWithKeyValue<IAssetItemVo[]>(this.AssetItemVosCacheKey))
+          // 缓存内容可能已损坏（不是数组），此时视为未命中并重新加载
+          if (Array.isArray(vosKV?.value) && (vosKV?.timestamp ?? 0) > expireTimestampMS) {
+            sub.next({ vos: vosKV!.value, errors: [] })
+            sub.complete()
+            return
+          }
+        } catch (error) {
+          console.error('AssetService.getAssetItemVos 读取缓存失败', error)
         }
       }
 
       let vos: IAssetItemVo[] = []
-      // 获取角色资产数据
-      let characterIds = await firstValueFrom(esiService.getChartacterIds())
-      for (let i = 0; i < characterIds.length; i++) {
-        let characterId = characterIds[i]
-        let characterAssetItemVo = await firstValueFrom(this.requestCharacterAssetItemVos(characterId))
-        vos.push(characterAssetItemVo)
+
+      // 获取已授权角色列表
+      let characterIds: number[] = []
+      try {
+        characterIds = await firstValueFrom(esiService.getChartacterIds())
+      } catch (error) {
+        errors.push(`获取已授权角色列表失败：${this.errorText(error)}`)
       }
 
-      // 获取军团资产数据
-      let charCornVos = await firstValueFrom(this.getCharacterCorporationVos(characterIds))
-      let corporationIdDict: Map<number, number> = new Map() // [军团id => 角色id]
-      for (let i = 0; i < charCornVos.length; i++) {
-        let charCornVo = charCornVos[i]
-        if (charCornVo.corporationId == 0) {
-          continue
-        }
-        // 同一个军团只加载一次
-        if (!corporationIdDict.has(charCornVo.corporationId)) {
-          corporationIdDict.set(charCornVo.corporationId, charCornVo.characterId)
-        }
-      }
-      for (let [corporationId, characterId] of corporationIdDict) {
+      // 获取角色资产数据（单个角色失败不影响其他角色）
+      for (let characterId of characterIds) {
         try {
-          let cornAssetItemVo = await firstValueFrom(this.requestCorporationAssetItemVos(characterId, corporationId))
-          vos.push(cornAssetItemVo)
+          vos.push(await firstValueFrom(this.requestCharacterAssetItemVos(characterId)))
         } catch (error) {
-          // 角色没有军团资产权限等情况下，跳过该军团，不影响角色资产展示
-          console.error('AssetService.getAssetItemVos 加载军团资产失败', error)
+          console.error(`AssetService.getAssetItemVos 角色[${characterId}]资产加载失败`, error)
+          errors.push(`角色[${characterId}] 资产加载失败：${this.errorText(error)}`)
         }
       }
 
-
-      // 存储到缓存中
-      await firstValueFrom(getSetTool.set(this.AssetItemVosCacheKey, vos))
-
       // 获取军团资产数据
-      sub.next(vos)
+      try {
+        let charCornVos = await firstValueFrom(this.getCharacterCorporationVos(characterIds))
+        let corporationIdDict: Map<number, number> = new Map() // [军团id => 角色id]
+        for (let charCornVo of charCornVos) {
+          if (charCornVo.corporationId == 0) {
+            continue
+          }
+          // 同一个军团只加载一次
+          if (!corporationIdDict.has(charCornVo.corporationId)) {
+            corporationIdDict.set(charCornVo.corporationId, charCornVo.characterId)
+          }
+        }
+        for (let [corporationId, characterId] of corporationIdDict) {
+          try {
+            vos.push(await firstValueFrom(this.requestCorporationAssetItemVos(characterId, corporationId)))
+          } catch (error) {
+            // 角色没有军团资产权限等情况下，跳过该军团，不影响角色资产展示
+            console.error(`AssetService.getAssetItemVos 军团[${corporationId}]资产加载失败`, error)
+            errors.push(`军团[${corporationId}] 资产加载失败（可能需要军团资产权限）：${this.errorText(error)}`)
+          }
+        }
+      } catch (error) {
+        console.error('AssetService.getAssetItemVos 获取军团信息失败', error)
+        errors.push(`获取军团信息失败：${this.errorText(error)}`)
+      }
+
+      // 存储到缓存中：有失败时不写缓存，避免不完整的数据在有效期内被反复复用
+      if (errors.length == 0) {
+        try {
+          await firstValueFrom(getSetTool.set(this.AssetItemVosCacheKey, vos))
+        } catch (error) {
+          // 缓存写入失败不影响展示
+          console.error('AssetService.getAssetItemVos 写入缓存失败', error)
+        }
+      }
+
+      sub.next({ vos: vos, errors: errors })
       sub.complete()
-    })})
+    })
+  }
+
+  /**
+   * 把异常转成可展示的文本
+   */
+  private errorText(error: any): string {
+    if (error == null) return '未知错误'
+    if (typeof error == 'string') return error
+    if (typeof error?.message == 'string' && error.message != '') return error.message
+    if (error?.status != null) return `HTTP ${error.status}${error.statusText ? ' ' + error.statusText : ''}`
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return String(error)
+    }
   }
 
 
@@ -147,7 +200,7 @@ export class AssetService {
    * @returns
    */
   private requestCharacterAssetItemVos(characterId: number): Observable<IAssetItemVo> {
-    return new Observable(sub => {setTimeout(async() => {
+    return ObservableHelper.createDeferred(async sub => {
       let esiService = await firstValueFrom(this.instanceMessage.esiService)
       let assets = await firstValueFrom(this.requestCharcterAssets(characterId))
 
@@ -197,17 +250,37 @@ export class AssetService {
         typeIds.add(asset.type_id)
       }
 
-      // 获取物品名字
-      let itemNameDict = await firstValueFrom(this.getCharacterAssetNameDict(characterId, Array.from(itemIds)))
+      // 类型与分组字典（名字解析、可命名资产过滤都依赖它）
       let typeDict = await firstValueFrom(this.typeRepository.getTypeDictByTypeIds(Array.from(typeIds)))
       let groupDict = await firstValueFrom(this.typeRepository.getGroupDict())
+
+      // 只有单例资产（舰船/集装箱等）才可能有自定义名字，堆叠物品与蓝图不必请求，
+      // 否则容易触发接口 400 并让整个角色的资产加载失败
+      let nameableItemIds: number[] = []
+      for (let asset of assets) {
+        if (!asset.is_singleton) continue
+        if (asset.type_id == TYPE_ID_CORPORATION_OFFICE) continue
+        let type = typeDict[asset.type_id]
+        let group = type?.groupID ? groupDict[type.groupID] : null
+        if (group && group.categoryID == CATEGORY_ID_BLUEPRINT) continue
+        nameableItemIds.push(asset.item_id)
+      }
+
+      // 获取物品名字（失败时降级为类型名，不影响资产列表展示）
+      let itemNameDict = new Map<number, string>()
+      try {
+        itemNameDict = await firstValueFrom(this.getCharacterAssetNameDict(characterId, nameableItemIds))
+      } catch (error) {
+        console.error(`AssetService.requestCharacterAssetItemVos 角色[${characterId}]资产名字获取失败`, error)
+      }
 
       // 空间站
       for (let stationId of stationIds) {
         let station = await firstValueFrom(this.universeRepository.getStation(stationId))
-        let stationItemVo = await firstValueFrom(this.getCharacterLocationAssetItemVo(stationId, station.name, characterItemVo.key, locationAssetsDict, itemNameDict, typeDict, groupDict))
+        let stationName = station?.name ?? `空间站[${stationId}]`
+        let stationItemVo = await firstValueFrom(this.getCharacterLocationAssetItemVo(stationId, stationName, characterItemVo.key, locationAssetsDict, itemNameDict, typeDict, groupDict))
         stationItemVo.type = AssetItemTypeConstants.Station
-        stationItemVo.typeId = station.type_id
+        stationItemVo.typeId = station?.type_id
         characterItemVo.children?.push(stationItemVo)
       }
 
@@ -231,7 +304,7 @@ export class AssetService {
 
       sub.next(characterItemVo)
       sub.complete()
-    })})
+    })
   }
 
   /**
@@ -264,7 +337,7 @@ export class AssetService {
       let corporationItemVo: IAssetItemVo = {
         id: croporationId,
         type: AssetItemTypeConstants.Corporation,
-        name: corporation.name,
+        name: corporation?.name ?? `军团[${croporationId}]`,
         key: `corporation-${croporationId}`,
         amount: 0,
         children: []
@@ -442,7 +515,7 @@ export class AssetService {
     typeDict: SdeTypeDict,
     groupDict: SdeGroupDict
   ): Observable<IAssetItemVo> {
-    return new Observable(sub => {setTimeout(async() => {
+    return ObservableHelper.createDeferred(async sub => {
       let locationItemVo: IAssetItemVo = {
         id: locationId,
         type: AssetItemTypeConstants.Station,
@@ -479,8 +552,9 @@ export class AssetService {
       for (let asset of locationAssets ?? []) {
         let type = typeDict[asset.type_id]
         if (!type?.groupID) continue
+        // 本地SDE可能缺少该分组（例如新版本物品），缺少时按物品机库处理，不能让整页加载失败
         let group = groupDict[type.groupID]
-        let categoryId = group.categoryID
+        let categoryId = group?.categoryID
 
         /** 第二层物品或容器 */
         let secondIemVo: IAssetItemVo = {
@@ -518,7 +592,7 @@ export class AssetService {
       }
       sub.next(locationItemVo)
       sub.complete()
-    })})
+    })
   }
 
   /**
@@ -702,7 +776,7 @@ export class AssetService {
     typeDict: SdeTypeDict,
     groupDict: SdeGroupDict
   ): Observable<IAssetItemVo> {
-    return new Observable(sub => {setTimeout(async() => {
+    return ObservableHelper.createDeferred(async sub => {
       let solarSystemItemVo: IAssetItemVo = {
         id: solarSystemId,
         type: AssetItemTypeConstants.SolarSystem,
@@ -747,14 +821,14 @@ export class AssetService {
 
       sub.next(solarSystemItemVo)
       sub.complete()
-    })})
+    })
   }
 
   /**
    * 请求角色下所有的资源信息
    */
   private requestCharcterAssets(characterId: number): Observable<IEisAsset[]> {
-    return new Observable(sub => { setTimeout(async() => {
+    return ObservableHelper.createDeferred(async sub => {
       let esiService = await firstValueFrom(this.instanceMessage.esiService)
 
       let pageValue = await firstValueFrom(this.esiApi.charactersAssets(await firstValueFrom(esiService.getAccessToken(characterId)), characterId))
@@ -767,7 +841,7 @@ export class AssetService {
       }
       sub.next(assets)
       sub.complete()
-    })})
+    })
   }
 
   /**
@@ -810,31 +884,15 @@ export class AssetService {
    * @returns
    */
   private getCharacterAssetNameDict(characterId: number, itemIds: number[]): Observable<Map<number, string>> {
-    return new Observable(sub => {setTimeout(async() => {
+    return ObservableHelper.createDeferred(async sub => {
       let esiService = await firstValueFrom(this.instanceMessage.esiService)
+      let accessToken = await firstValueFrom(esiService.getAccessToken(characterId))
 
-      let newItemIds = JSON.parse(JSON.stringify(itemIds))
-      let itemDict = new Map<number, string>()
-      do {
-        let itemIds = newItemIds.splice(0, 1000)
-        let partItemDict = await firstValueFrom(this.esiApi.charactersAssetsNames(await firstValueFrom(esiService.getAccessToken(characterId)), characterId, itemIds)
-          .pipe<Map<number, string>>(map((list) => {
-            let map = new Map<number, string>()
-            for (let item of list) {
-              if (item.name != 'None') {
-                map.set(item.item_id, item.name)
-              }
-            }
-            return map
-          })))
-        for (let item of partItemDict) {
-          itemDict.set(item[0], item[1])
-        }
-      } while(newItemIds.length > 0)
+      let itemDict = await this.requestAssetNames(itemIds, 1000, ids => this.esiApi.charactersAssetsNames(accessToken, characterId, ids))
 
       sub.next(itemDict)
       sub.complete()
-    })})
+    })
   }
 
   /**
@@ -845,36 +903,54 @@ export class AssetService {
    * @returns
    */
   private getCorporationAssetNameDict(accessToken: string, corporationId: number, itemIds: number[]): Observable<Map<number, string>> {
-    return new Observable(sub => {setTimeout(async() => {
-      let itemDict = new Map<number, string>()
-
-      // 军团接口对"无自定义名字"的资产会返回 400 Invalid IDs（且整批失败）；
-      // 因此先按小批请求，失败的批次二分到单个，剔除无自定义名的资产
-      const requestNames = async (ids: number[]) => {
-        if (ids.length == 0) return
-        try {
-          let list = await firstValueFrom(this.assetApi.corporationsAssetsNames(accessToken, corporationId, ids))
-          for (let item of list) {
-            if (item.name != 'None') {
-              itemDict.set(item.item_id, item.name)
-            }
-          }
-        } catch (error) {
-          if (ids.length == 1) return // 单个资产无自定义名，跳过
-          let middle = Math.floor(ids.length / 2)
-          await requestNames(ids.slice(0, middle))
-          await requestNames(ids.slice(middle))
-        }
-      }
-
-      const chunkSize = 50
-      for (let i = 0; i < itemIds.length; i += chunkSize) {
-        await requestNames(itemIds.slice(i, i + chunkSize))
-      }
+    return ObservableHelper.createDeferred(async sub => {
+      let itemDict = await this.requestAssetNames(itemIds, 50, ids => this.assetApi.corporationsAssetsNames(accessToken, corporationId, ids))
 
       sub.next(itemDict)
       sub.complete()
-    })})
+    })
+  }
+
+  /**
+   * 分批请求资产的自定义名字。
+   * ESI 对含"没有自定义名字"的资产的批次会整体返回 400，
+   * 因此对失败的批次二分重试到单个资产，无法命名的直接跳过，不影响资产列表展示。
+   * @param itemIds 待查询的资产id
+   * @param chunkSize 单批数量
+   * @param request 实际发请求的方法
+   */
+  private async requestAssetNames(
+    itemIds: number[],
+    chunkSize: number,
+    request: (ids: number[]) => Observable<IEsiAssetsNames[]>
+  ): Promise<Map<number, string>> {
+    let itemDict = new Map<number, string>()
+    if (itemIds.length == 0) {
+      return itemDict
+    }
+
+    const run = async (ids: number[]) => {
+      if (ids.length == 0) return
+      try {
+        let list = await firstValueFrom(request(ids))
+        for (let item of list) {
+          if (item.name != 'None') {
+            itemDict.set(item.item_id, item.name)
+          }
+        }
+      } catch (error) {
+        if (ids.length == 1) return // 单个资产没有自定义名字，跳过
+        let middle = Math.floor(ids.length / 2)
+        await run(ids.slice(0, middle))
+        await run(ids.slice(middle))
+      }
+    }
+
+    for (let i = 0; i < itemIds.length; i += chunkSize) {
+      await run(itemIds.slice(i, i + chunkSize))
+    }
+
+    return itemDict
   }
 
   /**
@@ -883,7 +959,7 @@ export class AssetService {
    * @returns
    */
   private getCorporationIds(characterIds: number[]): Observable<number[]> {
-    return new Observable(sub => {setTimeout(async() => {
+    return ObservableHelper.createDeferred(async sub => {
       let corporationIds: number[] = []
       let characters = await firstValueFrom(forkJoin(characterIds.map(characterId => this.esiApi.character(characterId))))
       for (let i in characters) {
@@ -896,7 +972,7 @@ export class AssetService {
 
       sub.next(corporationIds)
       sub.complete()
-    })})
+    })
   }
 
   /**
@@ -906,7 +982,15 @@ export class AssetService {
    */
   private getCharacterCorporationVos(characterIds: number[]): Observable<ICharacterCorporationVo[]> {
     return ObservableHelper.create(async(sub) => {
-      let vos = await firstValueFrom(forkJoin(characterIds.map(characterId => this.getCharacterCorporation(characterId))))
+      // 单个角色查询失败不影响其他角色
+      let vos = await Promise.all(characterIds.map(async characterId => {
+        try {
+          return await firstValueFrom(this.getCharacterCorporation(characterId))
+        } catch (error) {
+          console.error(`AssetService.getCharacterCorporationVos 角色[${characterId}]军团信息获取失败`, error)
+          return { characterId: characterId, corporationId: 0, name: '' } as ICharacterCorporationVo
+        }
+      }))
       sub.next(vos)
       sub.complete()
     })

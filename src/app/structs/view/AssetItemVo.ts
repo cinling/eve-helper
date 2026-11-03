@@ -12,6 +12,26 @@ export interface IAssetViewVo {
    * 上次更新时间
    */
   lastUpdateTime: string
+
+  /**
+   * 加载过程中出现的部分失败信息（角色/军团级别的隔离），为空表示全部成功
+   */
+  errors: string[]
+}
+
+/**
+ * 资产列表的加载结果
+ */
+export interface IAssetLoadResult {
+  /**
+   * 资产数据
+   */
+  vos: IAssetItemVo[]
+
+  /**
+   * 加载过程中出现的部分失败信息
+   */
+  errors: string[]
 }
 
 /**

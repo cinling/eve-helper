@@ -4,3 +4,21 @@
   align-items: baseline;
 }
 
+.error-container {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid #ffe58f;
+  border-radius: 4px;
+  background-color: #fffbe6;
+
+  p {
+    margin: 0 0 4px;
+    color: #ad8b00;
+  }
+
+  ul {
+    margin: 0;
+    padding-left: 20px;
+    color: #614700;
+  }
+}

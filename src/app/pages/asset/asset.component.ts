@@ -49,6 +49,17 @@ import { CharacterService } from '../../services/character.service';
   </button>
 </div>
 
+@if (errorMessages.length > 0) {
+  <div class="error-container">
+    <p><span nz-icon nzType="warning" nzTheme="outline"></span> 部分资产加载失败（其余数据仍会正常显示）：</p>
+    <ul>
+      @for (msg of errorMessages; track msg) {
+        <li>{{ msg }}</li>
+      }
+    </ul>
+  </div>
+}
+
 <nz-table
   #table
   [nzData]="assetItemVos"
@@ -64,14 +75,14 @@ import { CharacterService } from '../../services/character.service';
   </thead>
   <tbody>
      @for (data of table.data; track data) {
-        @for (item of mapOfExpandedData[data.key]; track item) {
+        @for (item of (mapOfExpandedData[data.key] || []); track item) {
           @if ((item.parent && item.parent.expand) || !item.parent) {
             <tr>
               <td
                 [nzIndentSize]="item.level! * 20"
                 [nzShowExpand]="item.children && item.children.length > 0"
                 [(nzExpand)]="item.expand"
-                (nzExpandChange)="collapse(mapOfExpandedData[data.key], item, $event)"
+                (nzExpandChange)="collapse(mapOfExpandedData[data.key] || [], item, $event)"
               >
                 @if (isLogicalNode(item)) {
                   <span
@@ -89,7 +100,6 @@ import { CharacterService } from '../../services/character.service';
                   />
                 }{{ item.name }}
               </td>
-              <td></td>
               <td>{{ item.quantity }}</td>
               <td>{{ item.amount }}</td>
             </tr>
@@ -115,6 +125,11 @@ export class AssetComponent {
   mapOfExpandedData: { [key: string]: IAssetItemVo[] } = {};
   loading = false
 
+  /**
+   * 部分角色/军团加载失败时的提示信息
+   */
+  errorMessages: string[] = []
+
   assetViewVo: IAssetViewVo | undefined
 
   private init(): Observable<void> {
@@ -131,14 +146,37 @@ export class AssetComponent {
    */
   async reloadAssetViewVo(reloadNow: boolean = false) {
     this.loading = true
-    let vo = await firstValueFrom(this.assetService.getAssetViewVo(reloadNow))
-    this.setAssetitemVos(vo.assetItemVos)
-    this.assetViewVo = vo
-    this.loading = false
+    this.errorMessages = []
+    try {
+      let vo = await firstValueFrom(this.assetService.getAssetViewVo(reloadNow))
+      this.setAssetitemVos(vo?.assetItemVos ?? [])
+      this.assetViewVo = vo
+      this.errorMessages = vo?.errors ?? []
+    } catch (error) {
+      // 兜底：即使整页加载失败，也要结束 loading 并把原因显示出来
+      console.error('AssetComponent.reloadAssetViewVo', error)
+      this.errorMessages = [this.errorText(error)]
+    } finally {
+      this.loading = false
+    }
+  }
+
+  private errorText(error: any): string {
+    if (error == null) return '未知错误'
+    if (typeof error == 'string') return error
+    if (typeof error?.message == 'string' && error.message != '') return error.message
+    if (error?.status != null) return `HTTP ${error.status}${error.statusText ? ' ' + error.statusText : ''}`
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return String(error)
+    }
   }
 
   private setAssetitemVos(assetItemVos: IAssetItemVo[]) {
     this.assetItemVos = assetItemVos
+    // 重置展开数据，避免残留上一次的旧节点
+    this.mapOfExpandedData = {}
     this.assetItemVos.forEach(vo => {
       this.mapOfExpandedData[vo.key] = this.convertTreeToList(vo);
     })
@@ -210,7 +248,8 @@ export class AssetComponent {
     if (!$event) {
       if (data.children) {
         data.children.forEach(d => {
-          const target = array.find(a => a.key === d.key)!;
+          const target = array.find(a => a.key === d.key)
+          if (!target) return
           target.expand = false;
           this.collapse(array, target, false);
         });
